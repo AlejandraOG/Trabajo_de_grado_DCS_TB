@@ -1,1 +1,299 @@
-hola mundo
+#Pipeline mapping and variant calling (SNPS) for Mutants
+
+  #preprocessing: Trimmomatic and FasQC
+  | #executed on Thor server
+
+  ./fastqc 50-1_R1_001_paired1.fq.gz -2 50-1_R2_001_paired1.fq.gz #cut adapters, primers, low quality bases and artifacts
+  
+  ./trimmomatic-0.39.jar PE mutant_forward.fq.gz mutant_reverse.fq.gz mutant_forward_paired.fq.gz mutant_forward_unpaired.fq.gz mutant_reverse_paired.fq.gz mutant_reverse_unpaired.fq.gz ILLUMINACLIP:TruSeq3-PE.fa:2:30:10:2:True LEADING:3 TRAILING:3 MINLEN:36
+  
+   #Mapping: Reads Alignment
+  
+    
+  #Note: Before starting take into account the total reads number for each sample (R1+R2), see fastQC html report.
+   
+  |  
+  | #Build index of reference genome:
+  |  
+  |  
+   bowtie2-build H37RV_27294_Ref.fasta H37Rv27294_indx
+  |  
+  |  
+   bowtie2 -x H37Rv27294_indx -1 ../QC/50-1_R1_001_paired1.fq.gz -2 ../QC/50-1_R2_001_paired1.fq.gz -S 50-1_alignment.sam -p 12
+  |  
+  |  
+  |  
+   #Result:
+  |  
+  | 35177480 reads; of these:
+  |  
+  | 35177480 (100.00%) were paired; of these:
+  |  
+  | 4720836 (13.42%) aligned concordantly 0 times
+  |  
+  | 30367151 (86.33%) aligned concordantly exactly 1 time
+  |  
+  | 89493 (0.25%) aligned concordantly >1 times
+  |  
+  | ----
+  |  
+  | 4720836 pairs aligned concordantly 0 times; of these:
+  |  
+  | 594382 (12.59%) aligned discordantly 1 time
+  |  
+  | ----
+  |  
+  | 4126454 pairs aligned 0 times concordantly or discordantly; of these:
+  |  
+  | 8252908 mates make up the pairs; of these:
+  |  
+  | 7727250 (93.63%) aligned 0 times
+  |  
+  | 515587 (6.25%) aligned exactly 1 time
+  |  
+  | 10071 (0.12%) aligned >1 times
+  |  
+  | 89.02% overall alignment rate
+  |  
+  |  
+  |  
+   #Convert the SAM file into a BAM file:
+  |  
+  |  
+  samtools view -bS -@ 12 50-1_alignment.sam > 50-1_alignment.bam
+  |  
+  |  
+   #Convert the BAM file to a sorted BAM file: on path /home/Aleja/Mutans_DCS_genomes/mapping
+  |  
+  |  
+  samtools sort -@ 12 50-1_alignment.bam -o 50-1_alignment_sort.bam
+  |  
+  |  
+   #Random subsample from 50-1_alignment_sort.bam: on path /home/Aleja/M_tuberculosis_genomes/mapping
+  |  
+  |  
+  samtools view -@8 -s 0.15 -b 50-1_alignment_sort.bam > 50-1_alignment_sort_subs15%.bam
+  |  
+  |  
+  | #Calculate coverage with histogram and table: on path: /home/Aleja/M_tuberculosis_genomes/mapping/coverage_assays
+  |  
+  |  
+  samtools coverage ../50-1_alignment_sort_rsubs15%.bam -m -o hist_50-1_bam_rsub15%_cov.txt
+  |  
+  |  
+  samtools coverage ../50-1_alignment_sort_rsubs15%.bam -m -o hist_50-1_bam_rsub15%_cov.txt
+  |  
+  |  
+ Index sort.bam useful to IGV
+  |  
+  |  
+  samtools index 50-1_alignment_sort_subs15%.bam 50-1_alignment_sort_subs15%.bam.bai
+  |  
+  # calculate coverage and deep all files:
+  | for f in ${filelist}; do /home/software/bamcov/./bamcov -m /home/jeanneth/ECOFF_project/results/Data_MTB_CIB/mapping_De_novo_output/${f}.aligned.sorted.bam -o /home/jeanneth/ECOFF_project/results/Data_MTB_CIB/mapping_De_novo_output/${f}.histogram.txt ; done
+  |  
+  |  
+  #Variant calling update (see this video https://www.youtube.com/watch?v=EpD2ZHM7Q8Q basic IGV) #(IGV advance-sort variant excellent example https://www.youtube.com/watch?v=ZKwm8dqIQpg)
+  |  
+  |  
+  #From file_sort.bam generate bcf file:                                                                                                                     bcftools mpileup --threads 4 -Ou -f M_tuberculosis_Ref.fasta 50-1_alignment_sort.bam \| bcftools call -mv -Ob -o 50-1_calls_bcftools.bcf
+  |  
+  |  
+   #Make file.txt list for each bcf file (seventeen samples):
+  |  
+   Ls -1 > all_sort_bam_list.txt
+  |  
+  #Generate variant calls in VCF format: http://www.htslib.org/doc/samtools-mpileup.html
+  |  
+  #Code line was taken of: https://samtools.github.io/bcftools/howtos/variant-calling.html
+  |  
+  bcftools mpileup --threads 4 -d 200 -Ou -f M_tuberculosis_Ref.fasta -b all_sort_bam_list.txt \| bcftools call -mv -Ob -o all_17MAB_calls.bcf
+  
+  #Convert from BCF to VCF
+  |  
+ bcftools view all_17MAB_calls.bcf  > all_17MAB_calls.vcf
+  |  
+  |  
+   #Searching interest regions “Extract sub-set region from VCF file: these lines allow to you identified #coordinates of genes in the chromosome and know all variants in a specific gene. #https://www.biostars.org/p/46331/
+  |  
+  |  
+  bgzip your.vcf
+  |  
+  tabix -p vcf your.vcf
+  |  
+   tabix your.vcf.gz chr1:10,000,000-20,000,000
+  |  
+  |  
+  #My example:
+  |  
+   tabix Tree_input.vcf.gz NC_010397.1:1,460,000-1,470,000 > salida.vcf
+  |  
+  |  
+  #Use IGV tools to identified Variants of interest: graphic interface
+  |  
+  |  
+  | #Input files: genome reference, GFF file (annotation) and VCF file
+  |  
+  |  
+  |  
+   #Genera
+  
+   #MANIPULATING VCF FILES
+  |  
+  #http://barcwiki.wi.mit.edu/wiki/SOPs/vcf_manipulation
+  |   
+  #https://samtools.github.io/bcftools/howtos/variant-calling.html (increase speed analysis)
+  |  
+  | bcftools mpileup --threads 4 -Ou -f M_tuberculosis_Ref.fasta 50-1_alignment_sort.bam \| bcftools call -mv -Ob -o 50-1_calls_bcftools.bcf
+  |  
+  #Tener en cuenta esta opción; -d, --max-depth  para la linea anterior
+  |  
+  |  
+  # https://www.biostars.org/p/276018/
+  |  
+  |  
+  #Generate consensus genome from VCF file (isolate H37Rv_27294): #http://samtools.github.io/bcftools/howtos/consensus-sequence.html
+  |  
+   bgzip -c 50-21.H37Rv_reflab.vcf > 50-21.H37Rv_reflab.vcf.gz
+  |  
+   bcftools index 50-21.H37Rv_reflab.vcf.gz
+  |  
+   cat MTB_H37Rv_Gref_NC_000962.3.fasta \| bcftools consensus 50-21.H37Rv_reflab.vcf.gz > H37Rv_27294_consensus.fasta
+  |  
+   # Output: 156 variants identified compared against H37Rv_reference_genome
+  |  
+  |  
+  |  
+  | #####Index sort.bam useful to IGV
+  |  
+  |  
+   samtools index 50-1_alignment_sort.bam 50-1_alignment_sort.bam.bai
+  |  
+
+   #Visualización en IGV de variantes buen tutoría: Intregrative genome viewer
+  |  
+   #https://bioinformatics-core-shared-training.github.io/intro-to-IGV/InspectingVariantsInIGV.html
+  |  
+   
+   #EXTRACT SNPs from VCFfile located in genes based on GFF file
+  |  
+   #Option 1:
+  |  
+   bedtools intersect -a input.vcf -b genes.gff -header -wa > output.vcf
+  |  
+  |  
+   #Option 2: for very large VCF flies it might be more efficient (human)
+  |  
+  |  
+   1. bgzip and index
+  |  
+   bgzip -c input.vcf > input.vcf.gz
+  |  
+   tabix input.vcf.gz
+  |  
+  |  
+   2. gff to bed
+  |  
+  # E.g with BEDOPS:
+  |  
+  |  
+   gff2bed < genes.gff > genes.bed
+  |  
+  |  
+  | 3. Query the regions
+  |  
+  tabix -R genes.bed -h input.vcf.gz > output.vcf
+
+  |  
+  # Extract Sub-Set Of Regions From Vcf File
+  |  
+  |
+   bgzip your.vcf
+  |  
+   tabix -p vcf your.vcf
+  |  
+   tabix your.vcf.gz chr1:10,000,000-20,000,000
+  |  
+  |  
+   #My example:
+  |  
+   tabix Tree_input.vcf.gz NC_010397.1:1,460,000-1,470,000 > salida.vcf
+  |  
+  |  
+  #How do you create a SNPs  (fast) from combined VCF without gaps
+  |  
+  #https://www.researchgate.net/post/How_do_you_create_a_SNPs_alignment_fasta_from_combined_vcf_#without_gaps_where_there_is_not_vcf_info
+  |  
+  |  
+  #Consensus sequence applying Coverage depth and Indels filters using bcftools and VCFtools
+  |  
+   #https://samtools.github.io/bcftools/howtos/consensus-sequence.html
+  |    
+  | From file_sort.bam generate bcf file:                                                                                                                                              bcftools mpileup --threads 4 -Ou -f M_tuberculosis_Ref.fasta 50-1_alignment_sort.bam \| bcftools call -mv -Ob -o 50-1_calls_bcftools.bcf
+  | Convert from BCF to VCF.                                                                                                                                                                          bcftools view your_calls.bcf  > your_calls.vcf
+  | Filter by Coverage Depth
+  | bcftools view  -i 'MIN(DP)>50’ your_calls.vcf >  your_calls_mDP50.vcf
+  | vcftools --vcf your_calls_mDP50.vcf --remove-indels --recode --recode-INFO-all --out your_calls_mDP50_rmIndel.vcf
+  | Indexed VCF and genome reference                                                                                                                                                bgzip your.vcf
+  |  
+  | bcftools index your.vcf.gz
+  |  
+  #Consensus sequence
+  |  
+  cat M_tuberculosis_Ref.fasta \| bcftools consensus your.vcf.gz > your.vcf.genome.fa
+  |  
+  #Retrieve specific fasta sequence from multicast file               
+   samtools faidx your_genome.fasta NC_010397.1 > your_genome_chr.fasta
+  | #Use mauve with collinear option to generate XMFA file with one sequence by genome
+  |  
+   ~software/mauve_snapshot_2015-02-13/linux-x64/progressiveMauve --collinear --output=29_abscessus.xmfa M_tuberculosis_Ref_crho.fa FLAC0* MAB*
+  |  
+  | Use fast-toolkit with Fasta-formater option -w o to generate fasta format 1 line header and 1 line sequence, useful for alignments
+  | Remove gaps with trimal                                                                                                                                     ~software/trimAl/source/trimal -in 29_abscessus_w0.fasta -out 29_abscessus_w0_nogaps_trimal.fasta -nogaps
+  | Extract SNPs only with snps-sites software                                                                                                                              snp-sites -mv -o 29_abscessus_w0_trimal_SNPs.fasta   29_abscessus_w0_trimal_nogaps.fasta
+
+   #Filters Using bcftools
+  |  
+  |  
+  1)filter by Coverage Depth
+  |  
+  bcftools view  -i 'MIN(DP)>38' SRR3321816_calls.vcf >  SRR3321816_calls_mDP38.vcf
+  |  
+  |  
+   #Remove INDELS from VCF file:
+  |  
+  |  
+   vcftools --vcf SRR3321816_calls_mDP50.vcf --remove-indels --recode --recode-INFO-all --out SRR3321816_calls_mDP50_rmIndel.vcf
+  |  
+  |  
+  # How invoke prokka with homebrew: I suggest you must uninstall homebrew or create stable environment variable
+  |  
+  |  
+  # Install brew in specific user but temporaly: propia
+  |  
+   - Configure Homebrew in your /home/uriel/.profile by running
+  |  
+  echo 'eval $(/home/linuxbrew/.linuxbrew/bin/brew shellenv)' >> /home/uriel/.profile
+  |  
+   - Add Homebrew to your PATH
+  |  
+   eval $(/home/linuxbrew/.linuxbrew/bin/brew shellenv)
+  |  
+  | Uninstall homebrew or brew in linux server:
+  |  
+  | /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/uninstall.sh)"
+  |  
+  |  
+
+  # Sequence length FASTA files using AWK
+  |  
+  | https://stackoverflow.com/questions/23992646/sequence-length-of-fasta-file
+  |  
+
+  # Oneliner:
+  |  
+   awk '/^>/ {if (seqlen){print seqlen}; print ;seqlen=0;next; } { seqlen += length($0)}END{print seqlen}' 29_abscessus_w0_trimal_SNPs.fasta.snp_sites.aln
+  |  
+  |  
+  | #Total SNPS in this file: 232501 SNPs en el conjunto de datos.
+
